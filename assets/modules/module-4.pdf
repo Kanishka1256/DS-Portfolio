@@ -1,0 +1,51 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Length 1090 >>
+stream
+BT /F1 20 Tf 62 750 Td (MultiIndex, Reshaping and Combining DataFrames) Tj ET
+BT /F2 10.5 Tf 62 726 Td (Digital Laboratory  -  Subject Code 22DS102006) Tj ET
+0.15 w 0.35 0.55 0.85 RG 62 710 m 533 710 l S
+BT /F1 13 Tf 62 676 Td (Module 4  -  Sample Notes) Tj ET
+BT /F2 11 Tf 62 642 Td (Aim: work with hierarchical indexes and combined tables.) Tj ET
+BT /F2 11 Tf 62 620 Td (Topics: set_index with multiple keys) Tj ET
+BT /F2 11 Tf 62 598 Td (Topics: stack / unstack reshaping) Tj ET
+BT /F2 11 Tf 62 576 Td (Topics: pivot_table and melt) Tj ET
+BT /F2 11 Tf 62 554 Td (Topics: merge, join and concat) Tj ET
+BT /F2 11 Tf 62 532 Td (Lab experiment covered: Experiment 4 \(parts A, B\)) Tj ET
+BT /F2 9.5 Tf 62 496 Td (This is a sample module PDF supplied with the website.) Tj ET
+BT /F2 9.5 Tf 62 480 Td (Replace the file in assets/modules/ with your own module) Tj ET
+BT /F2 9.5 Tf 62 464 Td (document to publish real notes, question banks or records.) Tj ET
+0.5 w 0.6 0.7 0.85 RG 62 74 m 533 74 l S
+BT /F2 9 Tf 62 56 Td (Digital Laboratory  -  Module 4 of 5  -  Academic Year 2025 - 2026) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000332 00000 n 
+0000000402 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1544
+%%EOF
