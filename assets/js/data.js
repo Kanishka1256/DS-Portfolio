@@ -19,6 +19,8 @@
                         Drop PDFs into assets/modules/ and list them here.
     8. PROJECTS     -> edit the `projects` array to change the cards shown
                         on the Projects showcase page.
+    9. TOOLS        -> edit the `tools` array to change the cards shown on
+                        the Tools & Technologies page.
 
   After editing, just refresh the browser. No build step, no server needed.
 ==========================================================================*/
@@ -517,6 +519,205 @@ var experiments = [
 ];
 
 /* -------------------------------------------------------------------------
+   3b. TOOLS  (shown on the Tools & Technologies page)
+   -------------------------------------------------------------------------
+   Each tool supports:
+     id         unique key (used for editing / deleting in the browser)
+     name       tool name shown as the card heading
+     desc       one-line description
+     category   short grouping label shown as a chip
+     type       e.g. Language, Library, Database, Workflow
+     language   primary programming language
+     platforms  supported platforms
+     website    official website (optional)
+     docs       documentation URL (optional)
+     github     repository URL (optional)
+     install    installation instructions (optional)
+     usage      usage notes (optional)
+     related    related technologies (optional)
+     tags       comma separated tags
+     status     Active | Inactive
+     created    date string, e.g. "2026-01-01"
+     exps       experiment ids this tool appears in (shown as a chip)
+     url        "Learn More" link opened by the card button
+
+   Tools created through the "Add Tool" form in the browser are stored in
+   localStorage and shown together with the entries below.
+   ------------------------------------------------------------------------- */
+var tools = [
+  {
+    "id": "python",
+    "name": "Python",
+    "desc": "Programming language for data analysis & experiments",
+    "category": "Programming Language",
+    "type": "Language",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://www.python.org/",
+    "docs": "https://docs.python.org/3/",
+    "github": "",
+    "status": "Active",
+    "tags": "python, programming",
+    "created": "2026-01-01",
+    "exps": [1, 2, 3, 4, 5, 6, 7],
+    "url": "https://www.geeksforgeeks.org/python-programming-language/"
+  },
+  {
+    "id": "pandas",
+    "name": "Pandas",
+    "desc": "Data manipulation and analysis library",
+    "category": "Data Analysis",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://pandas.pydata.org/",
+    "docs": "https://pandas.pydata.org/docs/",
+    "github": "",
+    "status": "Active",
+    "tags": "python, dataframe, data",
+    "created": "2026-01-01",
+    "exps": [1, 2, 3, 4, 5, 6, 7],
+    "url": "https://www.geeksforgeeks.org/pandas-tutorial/"
+  },
+  {
+    "id": "numpy",
+    "name": "NumPy",
+    "desc": "Numerical computing library",
+    "category": "Numerical Computing",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://numpy.org/",
+    "docs": "https://numpy.org/doc/",
+    "github": "",
+    "status": "Active",
+    "tags": "python, arrays, math",
+    "created": "2026-01-01",
+    "exps": [1, 3, 4, 5],
+    "url": "https://www.geeksforgeeks.org/numpy-tutorial/"
+  },
+  {
+    "id": "matplotlib",
+    "name": "Matplotlib",
+    "desc": "2D plotting library for visualizations",
+    "category": "Visualization",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://matplotlib.org/",
+    "docs": "https://matplotlib.org/stable/",
+    "github": "",
+    "status": "Active",
+    "tags": "python, plots, charts",
+    "created": "2026-01-01",
+    "exps": [5],
+    "url": "https://www.geeksforgeeks.org/matplotlib-tutorial/"
+  },
+  {
+    "id": "seaborn",
+    "name": "Seaborn",
+    "desc": "Statistical data visualization library",
+    "category": "Visualization",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://seaborn.pydata.org/",
+    "docs": "https://seaborn.pydata.org/api.html",
+    "github": "",
+    "status": "Active",
+    "tags": "python, statistics, plots",
+    "created": "2026-01-01",
+    "exps": [5],
+    "url": "https://www.geeksforgeeks.org/seaborn-tutorial/"
+  },
+  {
+    "id": "requests",
+    "name": "Requests",
+    "desc": "HTTP library for API calls",
+    "category": "Web & APIs",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://requests.readthedocs.io/",
+    "docs": "https://requests.readthedocs.io/en/latest/",
+    "github": "",
+    "status": "Active",
+    "tags": "python, http, api",
+    "created": "2026-01-01",
+    "exps": [2],
+    "url": "https://www.geeksforgeeks.org/python-requests-tutorial/"
+  },
+  {
+    "id": "sqlite",
+    "name": "SQLite",
+    "desc": "Lightweight relational database",
+    "category": "Database",
+    "type": "Database",
+    "language": "SQL",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://www.sqlite.org/",
+    "docs": "https://www.sqlite.org/docs.html",
+    "github": "",
+    "status": "Active",
+    "tags": "sql, database",
+    "created": "2026-01-01",
+    "exps": [2],
+    "url": "https://www.geeksforgeeks.org/sqlite-tutorial/"
+  },
+  {
+    "id": "regex",
+    "name": "Regex (re)",
+    "desc": "Regular expressions for pattern matching",
+    "category": "Text Processing",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://docs.python.org/3/library/re.html",
+    "docs": "https://docs.python.org/3/library/re.html",
+    "github": "",
+    "status": "Active",
+    "tags": "python, regex, text",
+    "created": "2026-01-01",
+    "exps": [3],
+    "url": "https://www.geeksforgeeks.org/python-regex/"
+  },
+  {
+    "id": "pandas-datetime",
+    "name": "Datetime (pandas)",
+    "desc": "Date/time parsing, time zones, periods & resampling",
+    "category": "Time Series",
+    "type": "Library",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://pandas.pydata.org/docs/user_guide/timeseries.html",
+    "docs": "https://pandas.pydata.org/docs/reference/api/pandas.to_datetime.html",
+    "github": "",
+    "status": "Active",
+    "tags": "python, time series, dates",
+    "created": "2026-01-01",
+    "exps": [6],
+    "url": "https://www.geeksforgeeks.org/python-pandas-to-datetime/"
+  },
+  {
+    "id": "groupby",
+    "name": "GroupBy",
+    "desc": "Split-apply-combine grouping & aggregation",
+    "category": "Data Analysis",
+    "type": "Workflow",
+    "language": "Python",
+    "platforms": "Windows, macOS, Linux",
+    "website": "https://pandas.pydata.org/docs/user_guide/groupby.html",
+    "docs": "https://pandas.pydata.org/docs/reference/groupby.html",
+    "github": "",
+    "status": "Active",
+    "tags": "python, groupby, aggregation",
+    "created": "2026-01-01",
+    "exps": [7],
+    "url": "https://www.geeksforgeeks.org/pandas-groupby/"
+  }
+];
+
+/* -------------------------------------------------------------------------
    4. PROJECTS  (shown on the Projects showcase page)
    -------------------------------------------------------------------------
    Each project supports:
@@ -545,5 +746,5 @@ var projects = [
 
 /* Make the arrays available to the app, both in the browser and in Node tests. */
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { laboratory, labMeta, student, social, experiments, projects };
+  module.exports = { laboratory, labMeta, student, social, modules, experiments, tools, projects };
 }

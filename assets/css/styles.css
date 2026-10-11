@@ -3098,3 +3098,190 @@ body.cm-open { overflow: hidden; }
   .dl-row__text b { font-size: 14.5px; white-space: normal; }
   .dl-row__text span { font-size: 13px; }
 }
+
+/* ==========================================================================
+   ADD / EDIT / DELETE CONTENT
+   Supporting styles for the Experiments, Tools and Projects add forms, the
+   confirmation dialog and the richer cards produced for user-created items.
+   Shares the existing colour tokens, spacing and the `.cm` / `.fld` system.
+   ========================================================================== */
+
+/* Wider dialog: the item forms are grouped and contain many fields. */
+.cm__panel--wide { width: min(760px, 100%); }
+.cm__panel--sm { width: min(440px, 100%); }
+
+/* Section heading inside the modal grid; spans both columns. */
+.fld__group {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 12px;
+  margin: 4px 0 -2px;
+  font-size: 11px; font-weight: 800; letter-spacing: 1.3px;
+  text-transform: uppercase; color: var(--accent);
+}
+.fld__group::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.fld__group:first-child { margin-top: 0; }
+
+/* Textareas and selects reuse the existing input styling. */
+.fld--wide { grid-column: 1 / -1; }
+textarea.fld__input { resize: vertical; min-height: 76px; line-height: 1.55; font-family: inherit; }
+select.fld__input {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+                    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 18px) center, calc(100% - 13px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+select.fld__input option { background: var(--surface-solid); color: var(--text); }
+
+/* Cards that have no video take the full width in the part header. */
+.sec-top--solo { grid-template-columns: 1fr; }
+
+/* The action bar under a user-created card. */
+.card-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  margin-top: 2px; padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.card-actions .btn { flex: 0 1 auto; }
+
+.btn--danger {
+  background: color-mix(in srgb, #ef4444 16%, transparent);
+  border-color: color-mix(in srgb, #ef4444 52%, transparent);
+  color: #fca5a5;
+}
+.btn--danger:hover {
+  background: color-mix(in srgb, #ef4444 26%, transparent);
+  border-color: #ef4444;
+  color: #fff;
+}
+
+/* Small metadata chips and fact lists on tool / project cards. */
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-row .chip { font-size: 11.5px; padding: 4px 10px; }
+
+.entity-meta-list {
+  display: flex; flex-wrap: wrap; gap: 6px 16px;
+  font-size: 12.5px; color: var(--text-muted);
+}
+.entity-meta-list b {
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--text-dim); margin-right: 4px;
+}
+
+/* Preserved-whitespace detail blocks used on cards and the overview page. */
+.entity-block {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 14px 16px;
+}
+.entity-block + .entity-block { margin-top: 12px; }
+.entity-block__title {
+  margin: 0 0 8px;
+  font-size: 11.5px; font-weight: 800; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--accent);
+}
+.entity-block p { margin: 0; white-space: pre-wrap; color: var(--text-muted); font-size: 13.5px; line-height: 1.6; }
+.entity-block p + p { margin-top: 8px; }
+.entity-block a { color: var(--accent); word-break: break-all; }
+
+.entity-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+/* Collapsible "More details" disclosure on tool / project cards. */
+.entity-details { border-top: 1px solid var(--border); padding-top: 10px; }
+.entity-details summary {
+  cursor: pointer; list-style: none;
+  font-size: 12.5px; font-weight: 700; color: var(--text-muted);
+}
+.entity-details summary::-webkit-details-marker { display: none; }
+.entity-details summary::before { content: "+ "; color: var(--accent); font-weight: 800; }
+.entity-details[open] summary::before { content: "\2212 "; }
+.entity-details summary:hover { color: var(--accent); }
+.entity-details .entity-block { border: 0; background: transparent; padding: 10px 0 0; }
+
+/* Project thumbnail. */
+.project-thumb {
+  width: 100%; aspect-ratio: 16 / 9; object-fit: cover;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+
+@media (max-width: 560px) {
+  .card-actions .btn { flex: 1 1 auto; }
+}
+
+/* --------------------------------------------------------------------------
+   9. ADJUSTABLE SIDEBAR  (3-bar hamburger toggle)
+   The sidebar stays as a normal left rail on desktop. Clicking the 3-bar
+   button collapses it so the page content uses the full width. On phones and
+   tablets it becomes an off-canvas drawer that slides in over the content.
+   -------------------------------------------------------------------------- */
+.topbar__menu { flex: none; }
+
+/* Desktop rail: visible by default, collapsible via the hamburger button. */
+@media (min-width: 941px) {
+  .sidebar {
+    overflow: hidden;
+  }
+  body.sidebar-collapsed .sidebar {
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    border-right: 0;
+    visibility: hidden;
+    overflow: hidden;
+  }
+}
+
+/* Mobile: off-canvas drawer opened by the 3-bar button. */
+@media (max-width: 940px) {
+  .sidebar {
+    position: fixed;
+    top: var(--topbar-h);
+    left: 0;
+    bottom: 0;
+    height: auto;
+    width: min(84vw, 320px);
+    z-index: 70;
+    padding: clamp(16px, 2vw, 24px) clamp(12px, 2vw, 16px);
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.28);
+    overflow-y: auto;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform var(--dur) var(--ease), visibility var(--dur) var(--ease);
+  }
+  .sidebar.is-open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+  .sidebar__nav {
+    flex-direction: column;
+    gap: clamp(4px, 1vw, 8px);
+  }
+  .sidebar__link {
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    padding: clamp(10px, 1.5vw, 12px) clamp(12px, 1.5vw, 16px);
+  }
+  .sidebar-scrim {
+    position: fixed;
+    inset: var(--topbar-h) 0 0 0;
+    z-index: 65;
+    background: rgba(15, 23, 42, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur) var(--ease);
+  }
+  body.sidebar-menu-open .sidebar-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+/* The scrim only makes sense when the drawer overlays content. */
+@media (min-width: 941px) {
+  .sidebar-scrim { display: none; }
+}
+

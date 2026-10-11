@@ -388,6 +388,936 @@
   }
 
   /* ---------------------------------------------------------------------
+     1c. USER-CREATED CONTENT
+     ---------------------------------------------------------------------
+     Experiments, Tools and Projects created through the in-app forms are
+     kept in localStorage and merged with the arrays from data.js at boot.
+     Only user-created items carry custom: true, so the entries that ship
+     with the site can never be edited or deleted from the UI.
+     --------------------------------------------------------------------- */
+  const CONTENT_STORES = {
+    experiments: "dslab.experiments.custom.v1",
+    tools: "dslab.tools.custom.v1",
+    projects: "dslab.projects.custom.v1"
+  };
+
+  const URL_RX = /^https?:\/\/[^\s]+$/i;
+
+  function contentList(kind) {
+    if (kind === "experiments") return window.experiments || (window.experiments = []);
+    if (kind === "tools") return window.tools || (window.tools = []);
+    return window.projects || (window.projects = []);
+  }
+
+  function readContentStore(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed)
+        ? parsed.filter(function (x) { return x && typeof x === "object"; })
+        : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writeContentStore(key, list) {
+    try {
+      localStorage.setItem(key, JSON.stringify(list));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function customItems(kind) {
+    return contentList(kind).filter(function (item) { return item && item.custom === true; });
+  }
+
+  function makeUid(prefix) {
+    return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+  }
+
+  function todayIso() {
+    const d = new Date();
+    const pad = function (n) { return String(n).padStart(2, "0"); };
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function splitList(value) {
+    return String(value == null ? "" : value)
+      .split(",")
+      .map(function (s) { return s.trim(); })
+      .filter(Boolean);
+  }
+
+  function splitLines(value) {
+    return String(value == null ? "" : value)
+      .split(/\r?\n/)
+      .map(function (s) { return s.trim(); })
+      .filter(Boolean);
+  }
+
+  /* Backfill fields added after a record was first saved, so editing an
+     older saved experiment does not wipe its procedure notes. */
+  function migrateExperiment(item) {
+    if (!item || typeof item !== "object") return item;
+    if (!item.procedure && Array.isArray(item.sections)) {
+      const proc = item.sections.filter(function (s) {
+        return s && s.notes && String(s.title || "").toLowerCase() === "procedure";
+      })[0];
+      if (proc) item.procedure = proc.notes;
+    }
+    return item;
+  }
+
+  /* Merge every saved item into the arrays the renderers already read. */
+  function loadContent() {
+    ["experiments", "tools", "projects"].forEach(function (kind) {
+      const list = contentList(kind);
+      readContentStore(CONTENT_STORES[kind]).forEach(function (item) {
+        if (kind === "experiments") migrateExperiment(item);
+        const clash = kind === "experiments"
+          ? list.some(function (x) { return String(x.id) === String(item.id); })
+          : list.some(function (x) { return x.uid && x.uid === item.uid; });
+        if (!clash) list.push(item);
+      });
+    });
+  }
+
+  /* ---- form field definitions -----------------------------------------
+     type: text | textarea | url | date | select
+     `section` groups the fields under a heading in the modal.
+     `from` maps a field to a differently-named stored property.
+     `join` separates array values when editing (tags, reference links). */
+  const EXPERIMENT_FIELDS = [
+    { key: "name", label: "Experiment Name", type: "text", req: true, min: 3, max: 120, section: "General Information" },
+    { key: "code", label: "Experiment ID / Code", type: "text", max: 32, section: "General Information",
+      rx: /^[A-Za-z0-9][A-Za-z0-9\-_ /. ]*$/, rxMsg: "Use letters, numbers and - _ / . only.",
+      hint: "Optional unique identifier, for example EXP-08." },
+    { key: "tagline", label: "Short Description", type: "text", req: true, max: 200, section: "General Information",
+      placeholder: "One line summarising the experiment." },
+    { key: "summary", label: "Detailed Description", type: "textarea", rows: 4, max: 4000, section: "General Information" },
+    { key: "category", label: "Category / Subject", type: "text", max: 80, section: "General Information" },
+    { key: "status", label: "Status", type: "select", req: true, section: "General Information",
+      options: ["Not Started", "In Progress", "Completed"] },
+    { key: "created", label: "Created Date", type: "date", req: true, section: "General Information" },
+    { key: "tags", label: "Tags", type: "text", max: 160, section: "General Information",
+      hint: "Comma separated, for example pandas, csv, io." },
+
+    { key: "language", label: "Programming Language", type: "text", max: 60, section: "Technical Details" },
+    { key: "technologies", label: "Technologies / Libraries Used", type: "text", max: 200, section: "Technical Details",
+      hint: "Comma separated." },
+    { key: "dataset", label: "Dataset Name", type: "text", max: 120, section: "Technical Details" },
+    { key: "datasetSource", label: "Dataset Source / URL", type: "url", max: 300, section: "Technical Details" },
+    { key: "notebook", label: "Notebook File or URL", type: "text", max: 300, section: "Technical Details" },
+
+    { key: "objective", label: "Objective", type: "textarea", rows: 3, max: 1500, section: "Implementation" },
+    { key: "procedure", label: "Procedure / Implementation Steps", type: "textarea", rows: 5, max: 6000, section: "Implementation" },
+    { key: "input", label: "Input Details", type: "textarea", rows: 3, max: 1500, section: "Implementation" },
+
+    { key: "expected", label: "Expected Output", type: "textarea", rows: 3, max: 1500, section: "Results & Outcomes" },
+    { key: "actual", label: "Actual Output", type: "textarea", rows: 3, max: 1500, section: "Results & Outcomes" },
+    { key: "results", label: "Results / Observations", type: "textarea", rows: 3, max: 2000, section: "Results & Outcomes" },
+
+    { key: "github", label: "GitHub Repository URL", type: "url", max: 300, section: "Links & References", from: "githubLink" },
+    { key: "references", label: "Reference Links", type: "textarea", rows: 3, max: 1500, section: "Links & References",
+      join: "\n", hint: "One URL per line." }
+  ];
+
+  const TOOL_FIELDS = [
+    { key: "name", label: "Tool Name", type: "text", req: true, min: 2, max: 100, section: "General Information" },
+    { key: "desc", label: "Short Description", type: "text", req: true, max: 200, section: "General Information" },
+    { key: "details", label: "Detailed Description", type: "textarea", rows: 4, max: 4000, section: "General Information" },
+    { key: "category", label: "Tool Category", type: "text", max: 80, section: "General Information" },
+    { key: "type", label: "Tool Type", type: "text", max: 80, section: "General Information",
+      hint: "For example Library, Language, Database, IDE." },
+    { key: "status", label: "Tool Status", type: "select", req: true, section: "General Information",
+      options: ["Active", "Inactive"] },
+    { key: "created", label: "Created Date", type: "date", req: true, section: "General Information" },
+    { key: "tags", label: "Tags", type: "text", max: 160, section: "General Information", hint: "Comma separated." },
+
+    { key: "language", label: "Programming Language", type: "text", max: 60, section: "Technical Details" },
+    { key: "platforms", label: "Supported Platforms", type: "text", max: 160, section: "Technical Details",
+      hint: "For example Windows, macOS, Linux, Web." },
+    { key: "related", label: "Related Technologies / Libraries", type: "text", max: 200, section: "Technical Details" },
+    { key: "install", label: "Installation Instructions", type: "textarea", rows: 3, max: 2000, section: "Technical Details" },
+    { key: "usage", label: "Usage Instructions", type: "textarea", rows: 3, max: 2000, section: "Technical Details" },
+
+    { key: "website", label: "Website URL", type: "url", max: 300, section: "Links" },
+    { key: "docs", label: "Documentation URL", type: "url", max: 300, section: "Links" },
+    { key: "github", label: "GitHub Repository URL", type: "url", max: 300, section: "Links" }
+  ];
+
+  const PROJECT_FIELDS = [
+    { key: "title", label: "Project Name", type: "text", req: true, min: 3, max: 140, section: "General Information" },
+    { key: "desc", label: "Short Description", type: "text", req: true, max: 220, section: "General Information" },
+    { key: "details", label: "Detailed Description", type: "textarea", rows: 4, max: 5000, section: "General Information" },
+    { key: "category", label: "Project Category", type: "text", max: 80, section: "General Information" },
+    { key: "type", label: "Project Type", type: "text", max: 80, section: "General Information" },
+    { key: "status", label: "Project Status", type: "select", req: true, section: "General Information",
+      options: ["Planning", "In Progress", "Completed", "On Hold"] },
+    { key: "visibility", label: "Project Visibility", type: "select", section: "General Information",
+      options: ["Public", "Private", "Unlisted"] },
+    { key: "start", label: "Project Start Date", type: "date", section: "General Information" },
+    { key: "end", label: "Project End Date", type: "date", section: "General Information" },
+    { key: "tags", label: "Tags", type: "text", max: 160, section: "General Information", hint: "Comma separated." },
+
+    { key: "languages", label: "Programming Languages", type: "text", max: 160, section: "Technical Details" },
+    { key: "tech", label: "Technologies & Frameworks", type: "text", max: 220, section: "Technical Details" },
+    { key: "team", label: "Team Members", type: "text", max: 200, section: "Technical Details", hint: "Comma separated." },
+    { key: "image", label: "Project Image / Thumbnail URL", type: "url", max: 300, section: "Technical Details" },
+
+    { key: "objective", label: "Project Objective", type: "textarea", rows: 3, max: 1500, section: "Details" },
+    { key: "features", label: "Key Features", type: "textarea", rows: 4, max: 2500, section: "Details" },
+
+    { key: "github", label: "GitHub Repository URL", type: "url", max: 300, section: "Links" },
+    { key: "demo", label: "Live Demo URL", type: "url", max: 300, section: "Links" },
+    { key: "docs", label: "Documentation URL", type: "url", max: 300, section: "Links" }
+  ];
+
+  /* ---- values -> stored model ----------------------------------------- */
+  function experimentFromValues(v) {
+    const sections = [];
+    if (v.procedure) {
+      sections.push({ id: "a", letter: "A", title: "Procedure", video: "", code: "", notes: v.procedure, outputImage: "" });
+    }
+    const outcome = [];
+    if (v.expected) outcome.push("Expected Output\n" + v.expected);
+    if (v.actual) outcome.push("Actual Output\n" + v.actual);
+    if (v.results) outcome.push("Results / Observations\n" + v.results);
+    if (outcome.length) {
+      sections.push({ id: "b", letter: "B", title: "Results", video: "", code: "", notes: outcome.join("\n\n"), outputImage: "" });
+    }
+    if (!sections.length) {
+      sections.push({ id: "a", letter: "A", title: "Overview", video: "", code: "", notes: v.summary || "", outputImage: "" });
+    }
+    return {
+      code: v.code,
+      name: v.name,
+      tagline: v.tagline,
+      summary: v.summary,
+      category: v.category,
+      status: v.status,
+      created: v.created,
+      tags: splitList(v.tags),
+      language: v.language,
+      technologies: splitList(v.technologies),
+      dataset: v.dataset,
+      datasetSource: v.datasetSource,
+      notebook: v.notebook,
+      objective: v.objective,
+      procedure: v.procedure,
+      input: v.input,
+      expected: v.expected,
+      actual: v.actual,
+      results: v.results,
+      githubLink: v.github,
+      references: splitLines(v.references),
+      previewVideo: "",
+      youtubeVideo: "",
+      youtubeLink: "",
+      sections: sections
+    };
+  }
+
+  function toolFromValues(v) {
+    return {
+      name: v.name,
+      desc: v.desc,
+      details: v.details,
+      category: v.category,
+      type: v.type,
+      status: v.status,
+      created: v.created,
+      tags: splitList(v.tags),
+      language: v.language,
+      platforms: v.platforms,
+      related: v.related,
+      install: v.install,
+      usage: v.usage,
+      website: v.website,
+      docs: v.docs,
+      github: v.github,
+      exps: []
+    };
+  }
+
+  function projectFromValues(v) {
+    return {
+      title: v.title,
+      desc: v.desc,
+      details: v.details,
+      category: v.category,
+      type: v.type,
+      status: v.status,
+      visibility: v.visibility,
+      start: v.start,
+      end: v.end,
+      tags: splitList(v.tags),
+      languages: v.languages,
+      tech: v.tech,
+      team: v.team,
+      image: v.image,
+      objective: v.objective,
+      features: v.features,
+      github: v.github,
+      demo: v.demo,
+      docs: v.docs,
+      tools: [v.tech, v.languages].filter(Boolean).join(", ")
+    };
+  }
+
+  function nextExperimentId() {
+    let max = 0;
+    contentList("experiments").forEach(function (e) {
+      const n = parseInt(e.id, 10);
+      if (!isNaN(n) && n > max) max = n;
+    });
+    return max + 1;
+  }
+
+  const ENTITY_NOUNS = { experiments: "Experiment", tools: "Tool", projects: "Project" };
+
+  function itemTitle(item) {
+    return String((item && (item.name || item.title)) || "Untitled");
+  }
+
+  /* Insert or replace a custom item and persist the whole custom set. */
+  function addOrUpdate(kind, model, uid) {
+    const list = contentList(kind);
+    if (uid) {
+      const idx = list.findIndex(function (x) { return x.uid === uid; });
+      if (idx < 0) return { ok: false, message: "That item is no longer available." };
+      model.uid = uid;
+      model.custom = true;
+      if (kind === "experiments") model.id = list[idx].id;
+      list[idx] = model;
+    } else {
+      model.uid = makeUid(kind === "experiments" ? "exp" : kind === "tools" ? "tool" : "project");
+      model.custom = true;
+      if (kind === "experiments") model.id = nextExperimentId();
+      list.push(model);
+    }
+    const persisted = writeContentStore(CONTENT_STORES[kind], customItems(kind));
+    const noun = ENTITY_NOUNS[kind];
+    return {
+      ok: true,
+      message: persisted
+        ? noun + (uid ? " updated successfully" : " added successfully")
+        : noun + (uid ? " updated" : " added") + " for this session only \u2014 browser storage is unavailable"
+    };
+  }
+
+  const ENTITY_META = {
+    experiments: {
+      addTitle: "Add Experiment",
+      editTitle: "Edit Experiment",
+      subtitle: "Saved in this browser, so the experiment stays after you reload the site.",
+      saveLabel: "Save Experiment",
+      fields: EXPERIMENT_FIELDS,
+      defaults: function () { return { status: "Not Started", created: todayIso() }; },
+      toModel: experimentFromValues,
+      validate: function (values, uid) {
+        const out = {};
+        const code = String(values.code || "").trim().toLowerCase();
+        if (code && contentList("experiments").some(function (e) {
+          return e.uid !== uid && String(e.code || "").trim().toLowerCase() === code;
+        })) out.code = "Another experiment already uses this ID.";
+        return out;
+      }
+    },
+    tools: {
+      addTitle: "Add Tool",
+      editTitle: "Edit Tool",
+      subtitle: "Saved in this browser, so the tool stays after you reload the site.",
+      saveLabel: "Save Tool",
+      fields: TOOL_FIELDS,
+      defaults: function () { return { status: "Active", created: todayIso() }; },
+      toModel: toolFromValues,
+      validate: function (values, uid) {
+        const out = {};
+        const name = String(values.name || "").trim().toLowerCase();
+        if (name && contentList("tools").some(function (t) {
+          return t.uid !== uid && String(t.name || "").trim().toLowerCase() === name;
+        })) out.name = "A tool with this name already exists.";
+        return out;
+      }
+    },
+    projects: {
+      addTitle: "Add Project",
+      editTitle: "Edit Project",
+      subtitle: "Saved in this browser, so the project stays after you reload the site.",
+      saveLabel: "Save Project",
+      fields: PROJECT_FIELDS,
+      defaults: function () { return { status: "Planning" }; },
+      toModel: projectFromValues,
+      validate: function (values, uid) {
+        const out = {};
+        const title = String(values.title || "").trim().toLowerCase();
+        if (title && contentList("projects").some(function (p) {
+          return p.uid !== uid && String(p.title || "").trim().toLowerCase() === title;
+        })) out.title = "A project with this name already exists.";
+        if (values.start && values.end && new Date(values.end) < new Date(values.start)) {
+          out.end = "The end date cannot be before the start date.";
+        }
+        return out;
+      }
+    }
+  };
+
+  /* ---- generic add / edit modal --------------------------------------- */
+  let entityModal = null;
+  let entityModalState = null;
+
+  function entityControlHtml(f, value) {
+    const id = "ef-" + f.key;
+    const val = String(value == null ? "" : value);
+    const cls = "fld__input" + (f.type === "textarea" ? " fld__input--area" : "");
+    let control;
+
+    if (f.type === "textarea") {
+      control = '<textarea class="' + cls + '" id="' + id + '" name="' + f.key + '" rows="' + (f.rows || 3) +
+        '" maxlength="' + (f.max || 4000) + '" placeholder="' + esc(f.placeholder || "") +
+        '" aria-describedby="' + id + '-err">' + esc(val) + "</textarea>";
+    } else if (f.type === "select") {
+      const opts = [];
+      if (!f.req) opts.push('<option value=""' + (val === "" ? " selected" : "") + ">&mdash; Not set &mdash;</option>");
+      f.options.forEach(function (o) {
+        opts.push('<option value="' + esc(o) + '"' + (val === o ? " selected" : "") + ">" + esc(o) + "</option>");
+      });
+      control = '<select class="' + cls + '" id="' + id + '" name="' + f.key + '" aria-describedby="' + id + '-err">' +
+        opts.join("") + "</select>";
+    } else {
+      const inputType = f.type === "date" ? "date" : f.type === "url" ? "url" : "text";
+      control = '<input class="' + cls + '" id="' + id + '" name="' + f.key + '" type="' + inputType +
+        '" maxlength="' + (f.max || 300) + '" value="' + esc(val) + '" placeholder="' + esc(f.placeholder || "") +
+        '" autocomplete="off" spellcheck="false" aria-describedby="' + id + '-err">';
+    }
+
+    return (
+      '<div class="fld' + (f.type === "textarea" ? " fld--wide" : "") + '">' +
+        '<label class="fld__label" for="' + id + '">' + esc(f.label) +
+          (f.req ? ' <span class="fld__req" aria-hidden="true">*</span>' : "") + "</label>" +
+        control +
+        (f.hint ? '<p class="fld__hint">' + esc(f.hint) + "</p>" : "") +
+        '<p class="fld__err" id="' + id + '-err" role="alert"></p>' +
+      "</div>"
+    );
+  }
+
+  function entityFormHtml(meta, values) {
+    const order = [];
+    const groups = {};
+    meta.fields.forEach(function (f) {
+      const name = f.section || "Details";
+      if (!groups[name]) { groups[name] = []; order.push(name); }
+      groups[name].push(f);
+    });
+    return order.map(function (name) {
+      return '<div class="fld__group"><span>' + esc(name) + "</span></div>" +
+        groups[name].map(function (f) { return entityControlHtml(f, values[f.key]); }).join("");
+    }).join("");
+  }
+
+  function ensureEntityModal() {
+    if (entityModal) return entityModal;
+    const wrap = document.createElement("div");
+    wrap.className = "cm";
+    wrap.id = "entityModal";
+    wrap.hidden = true;
+    wrap.innerHTML =
+      '<div class="cm__backdrop" data-entity-close></div>' +
+      '<div class="cm__panel cm__panel--wide" role="dialog" aria-modal="true" aria-labelledby="entityTitle">' +
+        '<div class="cm__head">' +
+          "<div>" +
+            '<h3 class="cm__title" id="entityTitle">Add</h3>' +
+            '<p class="cm__sub" id="entitySub"></p>' +
+          "</div>" +
+          '<button class="cm__x" type="button" aria-label="Close" data-entity-close>' + ICON.close + "</button>" +
+        "</div>" +
+        '<form class="cm__form" id="entityForm" novalidate>' +
+          '<div class="cm__grid" id="entityGrid"></div>' +
+          '<div class="cm__actions">' +
+            '<button class="btn btn--sm btn--ghost cm__reset" id="entityResetBtn" type="button">Reset Form</button>' +
+            '<span class="cm__gap"></span>' +
+            '<button class="btn btn--sm" type="button" data-entity-close>Cancel</button>' +
+            '<button class="btn btn--sm btn--primary" id="entitySaveBtn" type="submit">Save</button>' +
+          "</div>" +
+        "</form>" +
+      "</div>";
+    document.body.appendChild(wrap);
+    entityModal = wrap;
+
+    wrap.addEventListener("click", function (event) {
+      if (event.target.closest("[data-entity-close]")) closeEntityModal();
+    });
+    $("#entityForm", wrap).addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitEntityForm();
+    });
+    $("#entityResetBtn", wrap).addEventListener("click", function () {
+      if (!entityModalState) return;
+      fillEntityGrid(entityModalState.defaults);
+    });
+    wrap.addEventListener("input", function (event) {
+      if (event.target.classList && event.target.classList.contains("fld__input")) clearEntityError(event.target);
+    });
+    wrap.addEventListener("change", function (event) {
+      if (event.target.classList && event.target.classList.contains("fld__input")) clearEntityError(event.target);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && entityModal && !entityModal.hidden) closeEntityModal();
+    });
+    return wrap;
+  }
+
+  function showEntityError(input, message) {
+    input.classList.add("is-invalid");
+    input.setAttribute("aria-invalid", "true");
+    const err = document.getElementById(input.id + "-err");
+    if (err) err.textContent = message;
+  }
+
+  function clearEntityError(input) {
+    input.classList.remove("is-invalid");
+    input.removeAttribute("aria-invalid");
+    const err = document.getElementById(input.id + "-err");
+    if (err) err.textContent = "";
+  }
+
+  function entityFieldError(f, raw) {
+    const value = String(raw == null ? "" : raw).trim();
+    if (f.req && !value) return f.label + " is required.";
+    if (!value) return "";
+    if (f.min && value.length < f.min) return f.label + " must be at least " + f.min + " characters.";
+    if (f.max && value.length > f.max) return f.label + " must be " + f.max + " characters or fewer.";
+    if (f.rx && !f.rx.test(value)) return f.rxMsg || (f.label + " is not valid.");
+    if (f.type === "url" && !URL_RX.test(value)) return f.label + " must be a full http:// or https:// link.";
+    if (f.type === "date" && isNaN(new Date(value).getTime())) return f.label + " is not a valid date.";
+    return "";
+  }
+
+  function collectEntityValues(meta, item) {
+    const values = {};
+    meta.fields.forEach(function (f) {
+      let raw = item ? item[f.from || f.key] : "";
+      if (Array.isArray(raw)) raw = raw.join(f.join || ", ");
+      values[f.key] = String(raw == null ? "" : raw);
+    });
+    return values;
+  }
+
+  function fillEntityGrid(values) {
+    const meta = ENTITY_META[entityModalState.kind];
+    $("#entityGrid").innerHTML = entityFormHtml(meta, values || {});
+    meta.fields.forEach(function (f) {
+      const input = $("#ef-" + f.key, entityModal);
+      if (input) clearEntityError(input);
+    });
+  }
+
+  function openEntityForm(kind, item, trigger) {
+    const meta = ENTITY_META[kind];
+    if (!meta) return;
+    ensureEntityModal();
+    const defaults = item
+      ? collectEntityValues(meta, item)
+      : Object.assign({}, meta.defaults ? meta.defaults() : {});
+    entityModalState = {
+      kind: kind,
+      uid: item && item.uid ? item.uid : null,
+      defaults: defaults,
+      trigger: trigger || document.activeElement
+    };
+    $("#entityTitle").textContent = item ? meta.editTitle : meta.addTitle;
+    $("#entitySub").textContent = meta.subtitle;
+    $("#entitySaveBtn").textContent = item ? "Save Changes" : meta.saveLabel;
+    fillEntityGrid(defaults);
+    entityModal.hidden = false;
+    document.body.classList.add("cm-open");
+    const first = $("#ef-" + meta.fields[0].key, entityModal);
+    if (first) first.focus();
+  }
+
+  function closeEntityModal() {
+    if (!entityModal || entityModal.hidden) return;
+    entityModal.hidden = true;
+    if (!document.getElementById("confirmModal")) document.body.classList.remove("cm-open");
+    const trigger = entityModalState && entityModalState.trigger;
+    entityModalState = null;
+    if (trigger && document.contains(trigger)) trigger.focus();
+  }
+
+  function submitEntityForm() {
+    if (!entityModalState) return;
+    const meta = ENTITY_META[entityModalState.kind];
+    const values = {};
+    meta.fields.forEach(function (f) {
+      const input = $("#ef-" + f.key, entityModal);
+      values[f.key] = input ? String(input.value).trim() : "";
+    });
+
+    const extra = meta.validate ? meta.validate(values, entityModalState.uid) : {};
+    let firstBad = null;
+    meta.fields.forEach(function (f) {
+      const input = $("#ef-" + f.key, entityModal);
+      if (!input) return;
+      const message = entityFieldError(f, values[f.key]) || extra[f.key] || "";
+      if (message) {
+        showEntityError(input, message);
+        if (!firstBad) firstBad = input;
+      } else {
+        clearEntityError(input);
+      }
+    });
+
+    if (firstBad) {
+      firstBad.focus();
+      firstBad.scrollIntoView({ block: "nearest" });
+      return;
+    }
+
+    const saveBtn = $("#entitySaveBtn", entityModal);
+    if (saveBtn) saveBtn.disabled = true;
+    let result;
+    try {
+      result = addOrUpdate(entityModalState.kind, meta.toModel(values), entityModalState.uid);
+    } catch (err) {
+      result = { ok: false, message: "Could not save: " + ((err && err.message) || "unexpected error") };
+    }
+    if (saveBtn) saveBtn.disabled = false;
+
+    if (!result.ok) { toast(result.message); return; }
+    closeEntityModal();
+    render();
+    toast(result.message);
+  }
+
+  function editCustomItem(kind, uid, trigger) {
+    const item = contentList(kind).filter(function (x) { return x.uid === uid; })[0];
+    if (item) openEntityForm(kind, item, trigger);
+  }
+
+  function deleteCustomItem(kind, uid) {
+    const list = contentList(kind);
+    const item = list.filter(function (x) { return x.uid === uid; })[0];
+    if (!item) return;
+    const noun = ENTITY_NOUNS[kind];
+    openConfirm({
+      title: "Delete this " + noun.toLowerCase() + "?",
+      message: "\"" + itemTitle(item) + "\" will be permanently removed from this browser.",
+      confirmLabel: "Delete " + noun.toLowerCase(),
+      onConfirm: function () {
+        const idx = list.findIndex(function (x) { return x.uid === uid; });
+        if (idx >= 0) list.splice(idx, 1);
+        const persisted = writeContentStore(CONTENT_STORES[kind], customItems(kind));
+        render();
+        toast(persisted
+          ? noun + " deleted"
+          : noun + " removed (browser storage is unavailable)");
+      }
+    });
+  }
+
+  /* ---- confirmation dialog -------------------------------------------- */
+  function openConfirm(opts) {
+    closeConfirm();
+    const dlg = document.createElement("div");
+    dlg.className = "cm";
+    dlg.id = "confirmModal";
+    dlg.innerHTML =
+      '<div class="cm__backdrop" data-confirm-cancel></div>' +
+      '<div class="cm__panel cm__panel--sm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">' +
+        '<div class="cm__head"><div>' +
+          '<h3 class="cm__title" id="confirmTitle">' + esc(opts.title) + "</h3>" +
+          (opts.message ? '<p class="cm__sub">' + esc(opts.message) + "</p>" : "") +
+        "</div></div>" +
+        '<div class="cm__actions">' +
+          '<span class="cm__gap"></span>' +
+          '<button class="btn btn--sm" type="button" data-confirm-cancel>Cancel</button>' +
+          '<button class="btn btn--sm btn--danger" type="button" data-confirm-ok>' + esc(opts.confirmLabel || "Delete") + "</button>" +
+        "</div>" +
+      "</div>";
+    document.body.appendChild(dlg);
+    document.body.classList.add("cm-open");
+
+    let closed = false;
+    const finish = function (ok) {
+      if (closed) return;
+      closed = true;
+      closeConfirm();
+      if (ok && opts.onConfirm) opts.onConfirm();
+    };
+    dlg.addEventListener("click", function (event) {
+      if (event.target.closest("[data-confirm-ok]")) finish(true);
+      else if (event.target.closest("[data-confirm-cancel]") || event.target === dlg) finish(false);
+    });
+    dlg.__key = function (event) { if (event.key === "Escape") finish(false); };
+    document.addEventListener("keydown", dlg.__key);
+    const okBtn = $("[data-confirm-ok]", dlg);
+    if (okBtn) okBtn.focus();
+  }
+
+  function closeConfirm() {
+    const dlg = document.getElementById("confirmModal");
+    if (!dlg) return;
+    if (dlg.__key) document.removeEventListener("keydown", dlg.__key);
+    if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+    if (!entityModal || entityModal.hidden) document.body.classList.remove("cm-open");
+  }
+
+  /* ---- small card building blocks ------------------------------------- */
+  function entityActionsHtml(kind, uid, isCustom) {
+    if (!isCustom || !uid) return "";
+    return (
+      '<div class="card-actions">' +
+        '<button class="btn btn--sm" type="button" data-entity-action="' + esc(kind) +
+          '" data-entity-op="edit" data-entity-uid="' + esc(uid) + '">' + ICON.pencil + " Edit</button>" +
+        '<button class="btn btn--sm btn--danger" type="button" data-entity-action="' + esc(kind) +
+          '" data-entity-op="delete" data-entity-uid="' + esc(uid) + '">' + ICON.close + " Delete</button>" +
+      "</div>"
+    );
+  }
+
+  function addButtonHtml(kind, label) {
+    return '<button class="btn btn--add" type="button" data-add-entity="' + esc(kind) + '">+ ' + esc(label) + "</button>";
+  }
+
+  function externalLinkButton(href, label) {
+    return '<a class="btn btn--sm" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' +
+      ICON.external + esc(label) + "</a>";
+  }
+
+  function metaFactHtml(label, value) {
+    return "<span><b>" + esc(label) + "</b> " + esc(value) + "</span>";
+  }
+
+  function detailBlockHtml(title, body) {
+    return '<div class="entity-block"><p class="entity-block__title">' + esc(title) +
+      "</p><p>" + esc(body) + "</p></div>";
+  }
+
+  function tagChipsHtml(values) {
+    const list = Array.isArray(values) ? values : splitList(values);
+    if (!list.length) return "";
+    return '<div class="tag-row">' + list.map(function (t) {
+      return '<span class="chip">' + esc(t) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  /* ---- experiment cards ------------------------------------------------ */
+  function experimentCardHtml(experiment, query, index) {
+    const custom = experiment.custom === true;
+    const sections = experiment.sections || [];
+    const q = query || "";
+    const nameHtml = q ? highlightMatch(experiment.name, q) : esc(experiment.name);
+    const delay = typeof index === "number"
+      ? ' style="animation-delay:' + Math.min(index * 45, 400) + 'ms"'
+      : "";
+
+    const metaChips = [];
+    if (custom) {
+      if (experiment.code) metaChips.push('<span class="chip chip--gold">' + esc(experiment.code) + "</span>");
+      if (experiment.category) metaChips.push('<span class="chip chip--accent">' + esc(experiment.category) + "</span>");
+      if (experiment.status) metaChips.push('<span class="chip">' + esc(experiment.status) + "</span>");
+      if (experiment.created) metaChips.push('<span class="chip chip--ghost">' + esc(experiment.created) + "</span>");
+    }
+
+    const tech = custom && Array.isArray(experiment.technologies) ? experiment.technologies.slice(0, 5) : [];
+
+    return (
+      '<article class="exp-card" data-exp-card="' + esc(experiment.id) + '"' + delay +
+        ' tabindex="0" role="button" aria-label="Open preview of Experiment ' + esc(experiment.id) + ", " + esc(experiment.name) + '">' +
+        '<div class="exp-card__top">' +
+          '<span class="exp-card__num">' + esc(experiment.id) + "</span>" +
+          '<h3 class="exp-card__name">' + nameHtml + "</h3>" +
+        "</div>" +
+        '<p class="exp-card__tag">' + esc(experiment.tagline || "") + "</p>" +
+        (metaChips.length ? '<div class="tag-row">' + metaChips.join("") + "</div>" : "") +
+        (tech.length ? tagChipsHtml(tech) : "") +
+        '<div class="exp-card__foot">' +
+          '<span class="chip">' + plural(sections.length, "part") + "</span>" +
+          (sections.length ? '<span class="exp-card__parts">' + sections.map(function (s) {
+            return "<i>" + esc(s.letter) + "</i>";
+          }).join("") + "</span>" : "") +
+        "</div>" +
+        entityActionsHtml("experiments", experiment.uid, custom) +
+      "</article>"
+    );
+  }
+
+  /* ---- tool cards ------------------------------------------------------ */
+  function toolCardHtml(tool) {
+    const custom = tool.custom === true;
+    const exps = Array.isArray(tool.exps) ? tool.exps : [];
+    const expsChip = exps.length
+      ? '<span class="chip">' + esc(exps.map(function (x) { return "Exp " + x; }).join(", ")) + "</span>"
+      : "";
+
+    /* Entries that ship with the site keep their original compact card. */
+    if (!custom) {
+      const linkTarget = tool.website || tool.docs || tool.github || tool.url || "";
+      return (
+        '<article class="exp-card">' +
+          '<div class="exp-card__top">' +
+            '<h3 class="exp-card__name">' + esc(tool.name) + "</h3>" +
+          "</div>" +
+          '<p class="exp-card__tag">' + esc(tool.desc) + "</p>" +
+          '<div style="margin-top:8px">' +
+            (expsChip || '<span class="chip">' + esc(tool.category || "Tool") + "</span>") +
+          "</div>" +
+          '<div style="margin-top:auto;padding-top:12px">' +
+            (linkTarget
+              ? '<a class="btn btn--sm btn--primary" href="' + esc(linkTarget) + '" target="_blank" rel="noopener noreferrer">Learn More</a>'
+              : "") +
+          "</div>" +
+        "</article>"
+      );
+    }
+
+    const metaChips = [];
+    if (tool.category) metaChips.push('<span class="chip chip--accent">' + esc(tool.category) + "</span>");
+    if (tool.type) metaChips.push('<span class="chip">' + esc(tool.type) + "</span>");
+    if (tool.status) metaChips.push('<span class="chip' + (tool.status === "Inactive" ? " chip--ghost" : "") + '">' + esc(tool.status) + "</span>");
+    if (tool.created) metaChips.push('<span class="chip chip--ghost">' + esc(tool.created) + "</span>");
+
+    const facts = [];
+    if (tool.language) facts.push(metaFactHtml("Language", tool.language));
+    if (tool.platforms) facts.push(metaFactHtml("Platforms", tool.platforms));
+    if (tool.related) facts.push(metaFactHtml("Related", tool.related));
+
+    const details = [];
+    if (tool.details) details.push(detailBlockHtml("Description", tool.details));
+    if (tool.install) details.push(detailBlockHtml("Installation", tool.install));
+    if (tool.usage) details.push(detailBlockHtml("Usage", tool.usage));
+
+    const links = [];
+    if (tool.website) links.push(externalLinkButton(tool.website, "Website"));
+    if (tool.docs) links.push(externalLinkButton(tool.docs, "Docs"));
+    if (tool.github) links.push(externalLinkButton(tool.github, "GitHub"));
+
+    return (
+      '<article class="exp-card">' +
+        '<div class="exp-card__top">' +
+          '<h3 class="exp-card__name">' + esc(tool.name) + "</h3>" +
+        "</div>" +
+        (metaChips.length ? '<div class="tag-row">' + metaChips.join("") + "</div>" : "") +
+        '<p class="exp-card__tag">' + esc(tool.desc) + "</p>" +
+        (facts.length ? '<div class="entity-meta-list">' + facts.join("") + "</div>" : "") +
+        tagChipsHtml(tool.tags) +
+        (details.length
+          ? '<details class="entity-details"><summary>More details</summary>' + details.join("") + "</details>"
+          : "") +
+        (links.length ? '<div class="entity-links">' + links.join("") + "</div>" : "") +
+        entityActionsHtml("tools", tool.uid, custom) +
+      "</article>"
+    );
+  }
+
+  /* ---- project cards --------------------------------------------------- */
+  function projectCardHtml(project) {
+    const custom = project.custom === true;
+
+    if (!custom) {
+      const link = project.github
+        ? '<div style="margin-top:auto;padding-top:12px">' +
+            '<a class="btn btn--sm btn--primary" href="' + esc(project.github) + '" target="_blank" rel="noopener noreferrer">GitHub Link</a>' +
+          "</div>"
+        : "";
+      return (
+        '<article class="exp-card">' +
+          '<div class="exp-card__top">' +
+            '<h3 class="exp-card__name">' + esc(project.title) + "</h3>" +
+          "</div>" +
+          '<div style="margin-top:8px">' +
+            '<span class="chip">' + esc(project.tools) + "</span>" +
+          "</div>" +
+          '<p class="exp-card__tag" style="margin-top:10px">' + esc(project.desc) + "</p>" +
+          link +
+        "</article>"
+      );
+    }
+
+    const metaChips = [];
+    if (project.category) metaChips.push('<span class="chip chip--accent">' + esc(project.category) + "</span>");
+    if (project.type) metaChips.push('<span class="chip">' + esc(project.type) + "</span>");
+    if (project.status) metaChips.push('<span class="chip">' + esc(project.status) + "</span>");
+    if (project.visibility) metaChips.push('<span class="chip chip--ghost">' + esc(project.visibility) + "</span>");
+
+    const tech = splitList(project.tech);
+    const facts = [];
+    if (project.languages) facts.push(metaFactHtml("Languages", project.languages));
+    if (project.team) facts.push(metaFactHtml("Team", project.team));
+    if (project.start) facts.push(metaFactHtml("Start", project.start));
+    if (project.end) facts.push(metaFactHtml("End", project.end));
+
+    const links = [];
+    if (project.github) links.push(externalLinkButton(project.github, "GitHub"));
+    if (project.demo) links.push(externalLinkButton(project.demo, "Live Demo"));
+    if (project.docs) links.push(externalLinkButton(project.docs, "Docs"));
+
+    const details = [];
+    if (project.objective) details.push(detailBlockHtml("Objective", project.objective));
+    if (project.features) details.push(detailBlockHtml("Key Features", project.features));
+    if (project.details) details.push(detailBlockHtml("Detailed Description", project.details));
+
+    const thumb = project.image
+      ? '<img class="project-thumb" src="' + esc(project.image) + '" alt="Thumbnail for ' + esc(project.title) + '" loading="lazy">'
+      : "";
+
+    return (
+      '<article class="exp-card">' +
+        thumb +
+        '<div class="exp-card__top">' +
+          '<h3 class="exp-card__name">' + esc(project.title) + "</h3>" +
+        "</div>" +
+        (metaChips.length ? '<div class="tag-row">' + metaChips.join("") + "</div>" : "") +
+        '<p class="exp-card__tag">' + esc(project.desc) + "</p>" +
+        (tech.length ? tagChipsHtml(tech) : "") +
+        tagChipsHtml(project.tags) +
+        (facts.length ? '<div class="entity-meta-list">' + facts.join("") + "</div>" : "") +
+        (links.length ? '<div class="entity-links">' + links.join("") + "</div>" : "") +
+        (details.length
+          ? '<details class="entity-details"><summary>More details</summary>' + details.join("") + "</details>"
+          : "") +
+        entityActionsHtml("projects", project.uid, custom) +
+      "</article>"
+    );
+  }
+
+  function emptyExperimentsHtml() {
+    return (
+      '<div class="empty-state">' +
+        ICON.search +
+        "<h3>No experiments yet</h3>" +
+        '<p class="muted">Use the Add Experiment button to create your first experiment.</p>' +
+      "</div>"
+    );
+  }
+
+  function emptyToolsHtml() {
+    return (
+      '<div class="empty-state">' +
+        ICON.search +
+        "<h3>No tools yet</h3>" +
+        '<p class="muted">Use the Add Tool button to add your first tool.</p>' +
+      "</div>"
+    );
+  }
+
+  function emptyProjectsHtml() {
+    return (
+      '<div class="empty-state">' +
+        ICON.search +
+        "<h3>No projects yet</h3>" +
+        '<p class="muted">Use the Add Project button to showcase your first project.</p>' +
+      "</div>"
+    );
+  }
+
+  /* ---------------------------------------------------------------------
      2. SHARED PARTIALS
      --------------------------------------------------------------------- */
   function studentFieldsHtml() {
@@ -1449,23 +2379,7 @@
   function renderHome() {
     const cards = experiments
       .map(function (e, i) {
-        return (
-          '<article class="exp-card" data-exp-card="' + e.id + '" ' +
-            'style="animation-delay:' + Math.min(i * 45, 400) + 'ms" tabindex="0" role="button" ' +
-            'aria-label="Open preview of Experiment ' + e.id + ", " + esc(e.name) + '">' +
-            '<div class="exp-card__top">' +
-              '<span class="exp-card__num">' + e.id + "</span>" +
-              '<h3 class="exp-card__name">' + esc(e.name) + "</h3>" +
-            "</div>" +
-            '<p class="exp-card__tag">' + esc(e.tagline || "") + "</p>" +
-            '<div class="exp-card__foot">' +
-              '<span class="chip">' + plural(e.sections.length, "part") + "</span>" +
-              '<span class="exp-card__parts">' + e.sections.map(function (s) {
-                return "<i>" + esc(s.letter) + "</i>";
-              }).join("") + "</span>" +
-            "</div>" +
-          "</article>"
-        );
+        return experimentCardHtml(e, "", i);
       })
       .join("");
 
@@ -1523,6 +2437,7 @@
             '<span class="exp-head__spacer"></span>' +
             '<span class="exp-head__hint" id="addHint"></span>' +
             '<button class="btn btn--add" id="addBtn" type="button">+ ADD</button>' +
+            addButtonHtml("experiments", "Add Experiment") +
           "</div>" +
           '<div class="exp-grid" id="expGrid">' + (cards || emptyStateHtml()) + "</div>" +
         '</section>' +
@@ -1593,6 +2508,7 @@
     $$("[data-exp-card]", grid).forEach(function (card) {
       card.addEventListener("click", function () { openExperiment(card.getAttribute("data-exp-card")); });
       card.addEventListener("keydown", function (event) {
+        if (event.target !== card) return;
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           openExperiment(card.getAttribute("data-exp-card"));
@@ -1607,13 +2523,16 @@
        those words never appear in its title. */
     function haystack(e) {
       if (e.__hay) return e.__hay;
-      const parts = [e.name, e.tagline, e.summary];
+      const parts = [e.name, e.tagline, e.summary, e.category, e.status, e.code];
+      if (Array.isArray(e.technologies)) parts.push(e.technologies.join(" "));
+      if (Array.isArray(e.tags)) parts.push(e.tags.join(" "));
       (e.sections || []).forEach(function (s) {
         parts.push(s.title);
         /* The full source is indexed too so a student can find the part that
            actually calls a library, e.g. searching "scipy" or "numpy".
            The whole corpus is only a few tens of kB, so this stays cheap. */
         if (s.code) parts.push(s.code);
+        if (s.notes) parts.push(s.notes);
       });
       e.__hay = parts.join(" \u0001 ").toLowerCase();
       return e.__hay;
@@ -1639,28 +2558,14 @@
 
       grid.innerHTML = visible
         .map(function (e) {
-          return (
-            '<article class="exp-card" data-exp-card="' + e.id + '" tabindex="0" role="button" ' +
-              'aria-label="Open preview of Experiment ' + e.id + ", " + esc(e.name) + '">' +
-              '<div class="exp-card__top">' +
-                '<span class="exp-card__num">' + e.id + "</span>" +
-                "<h3 class=\"exp-card__name\">" + highlightMatch(e.name, q) + "</h3>" +
-              "</div>" +
-              '<p class="exp-card__tag">' + esc(e.tagline || "") + "</p>" +
-              '<div class="exp-card__foot">' +
-                '<span class="chip">' + plural(e.sections.length, "part") + "</span>" +
-                '<span class="exp-card__parts">' + e.sections.map(function (s) {
-                  return "<i>" + esc(s.letter) + "</i>";
-                }).join("") + "</span>" +
-              "</div>" +
-            "</article>"
-          );
+          return experimentCardHtml(e, q);
         })
         .join("");
 
       $$("[data-exp-card]", grid).forEach(function (card) {
         card.addEventListener("click", function () { openExperiment(card.getAttribute("data-exp-card")); });
         card.addEventListener("keydown", function (event) {
+          if (event.target !== card) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             openExperiment(card.getAttribute("data-exp-card"));
@@ -1790,6 +2695,12 @@
             '<p class="eyebrow">Experiment ' + experiment.id + "</p>" +
             '<h1 class="preview-title"><span class="hl">' + esc(experiment.name) + "</span></h1>" +
             '<p class="sec-sub">' + esc(experiment.tagline || "") + "</p>" +
+            (experiment.custom === true && experiment.summary
+              ? '<p class="sec-sub" style="margin-top:10px">' + esc(experiment.summary) + "</p>"
+              : "") +
+            (experiment.custom === true
+              ? '<div style="margin-top:16px">' + entityActionsHtml("experiments", experiment.uid, true) + "</div>"
+              : "") +
             authoredNoticeHtml(experiment) +
             '<div class="meta-row">' +
               '<span class="chip chip--accent">' + plural(experiment.sections.length, "part") + "</span>" +
@@ -1825,6 +2736,65 @@
   /* ---------------------------------------------------------------------
      PAGE 3 - EXPERIMENT OVERVIEW / DETAILS
      --------------------------------------------------------------------- */
+  /* Extra detail block shown only for experiments created through the form,
+     so the layout of the experiments that ship with the site is untouched. */
+  function customExperimentDetailsHtml(experiment) {
+    if (!experiment || experiment.custom !== true) return "";
+
+    const rows = [];
+    function addRow(label, value, isLink) {
+      if (!value) return;
+      const dd = isLink
+        ? '<a href="' + esc(value) + '" target="_blank" rel="noopener noreferrer">' + esc(value) + "</a>"
+        : esc(value);
+      rows.push('<div class="idcard__field"><dt>' + esc(label) + "</dt><dd>" + dd + "</dd></div>");
+    }
+    addRow("Experiment ID", experiment.code);
+    addRow("Category", experiment.category);
+    addRow("Status", experiment.status);
+    addRow("Language", experiment.language);
+    addRow("Created", experiment.created);
+    addRow("Dataset", experiment.dataset);
+    addRow("Dataset Source", experiment.datasetSource, true);
+    addRow("Notebook", experiment.notebook);
+    addRow("GitHub", experiment.githubLink, true);
+
+    const blocks = [];
+    if (experiment.summary) blocks.push(detailBlockHtml("Detailed Description", experiment.summary));
+    if (experiment.objective) blocks.push(detailBlockHtml("Objective", experiment.objective));
+    if (experiment.procedure) blocks.push(detailBlockHtml("Procedure / Implementation Steps", experiment.procedure));
+    if (experiment.input) blocks.push(detailBlockHtml("Input Details", experiment.input));
+    if (experiment.expected) blocks.push(detailBlockHtml("Expected Output", experiment.expected));
+    if (experiment.actual) blocks.push(detailBlockHtml("Actual Output", experiment.actual));
+    if (experiment.results) blocks.push(detailBlockHtml("Results / Observations", experiment.results));
+    if (Array.isArray(experiment.references) && experiment.references.length) {
+      blocks.push(
+        '<div class="entity-block"><p class="entity-block__title">Reference Links</p>' +
+          experiment.references.map(function (u) {
+            return '<p><a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + "</a></p>";
+          }).join("") +
+        "</div>"
+      );
+    }
+
+    const tech = Array.isArray(experiment.technologies) ? experiment.technologies : [];
+    const tags = Array.isArray(experiment.tags) ? experiment.tags : [];
+    const chips = tech.concat(tags).map(function (t) {
+      return '<span class="chip">' + esc(t) + "</span>";
+    }).join("");
+
+    return (
+      '<section class="split" style="display:grid;grid-template-columns:1fr;gap:clamp(18px,2.6vw,30px);align-items:start">' +
+        '<div class="card card--pad">' +
+          '<h2 class="field-label"><span class="dot"></span>Experiment details</h2>' +
+          (rows.length ? '<dl class="idcard__fields" style="margin-bottom:18px">' + rows.join("") + "</dl>" : "") +
+          (chips ? '<div class="tag-row" style="margin-bottom:18px">' + chips + "</div>" : "") +
+          (blocks.length ? blocks.join("") : '<p class="muted">No additional details were recorded.</p>') +
+        "</div>" +
+      "</section>"
+    );
+  }
+
   function renderOverview(experiment) {
     const parts = experiment.sections
       .map(function (s) {
@@ -1849,12 +2819,17 @@
           '<div class="card card--pad">' +
             '<h2 class="field-label"><span class="dot"></span>Tools Used</h2>' +
             '<div>' +
-              getExperimentTools(experiment).map(function(t){
+              (experiment.custom === true && Array.isArray(experiment.technologies) && experiment.technologies.length
+                ? experiment.technologies
+                : getExperimentTools(experiment)
+              ).map(function(t){
                 return '<span class="chip chip--accent" style="margin:4px 4px 0 0">' + esc(t) + '</span>';
               }).join('') +
             "</div>" +
           "</div>" +
         "</section>" +
+
+        customExperimentDetailsHtml(experiment) +
 
         '<section class="split" style="display:grid;grid-template-columns:1fr;gap:clamp(18px,2.6vw,30px);align-items:start">' +
           '<div class="card card--pad">' +
@@ -1908,6 +2883,9 @@
     const next = at < siblings.length - 1 ? siblings[at + 1] : null;
     const code = String(section.code || "");
     const fileName = "experiment-" + experiment.id + "-" + section.id.toLowerCase() + ".py";
+    const hasVideo = !!(section.video || section.youtubeVideo);
+    const hasCode = !!code;
+    const notesText = String(section.notes || "").trim();
 
     const output = section.outputImage
       ? '<figure class="output-figure">' +
@@ -1939,34 +2917,39 @@
 
           /* LEFT : small part video beside the part details, then the code */
           "<div>" +
-            '<div class="sec-top">' +
-              sectionVideoSmallHtml(section) +
+            '<div class="sec-top' + (hasVideo ? "" : " sec-top--solo") + '">' +
+              (hasVideo ? sectionVideoSmallHtml(section) : "") +
               '<div class="card card--pad">' +
                 '<p class="eyebrow">Experiment ' + experiment.id + " &middot; Part " + esc(section.letter) + "</p>" +
                 '<h2 class="sec-title" style="font-size:clamp(19px,2.3vw,24px)">' + esc(section.title) + "</h2>" +
                 '<dl class="idcard__fields" style="margin-top:14px">' +
                   '<div class="idcard__field"><dt>Experiment</dt><dd>' + experiment.id + "</dd></div>" +
                   '<div class="idcard__field"><dt>Part</dt><dd>' + esc(section.letter) + "</dd></div>" +
-                  '<div class="idcard__field"><dt>Language</dt><dd>Python</dd></div>' +
+                  '<div class="idcard__field"><dt>Language</dt><dd>' +
+                    esc(experiment.language || (experiment.custom === true ? "Not specified" : "Python")) + "</dd></div>" +
                   '<div class="idcard__field"><dt>Lines</dt><dd>' + (code ? plural(code.split("\n").length, "line") : "0") + "</dd></div>" +
                   '<div class="idcard__field"><dt>Subject</dt><dd>' + esc(labMeta.subjectCode) + "</dd></div>" +
                 "</dl>" +
               "</div>" +
             "</div>" +
-            '<div>' +
-              '<h2 class="field-label"><span class="dot"></span>Code</h2>' +
-              codeViewerHtml(code, fileName) +
-              (code ? '<div class="code-runbar">' +
-                '<button class="btn btn--run" type="button" data-run-code>' + ICON.play + " Run this code</button>" +
-                '<span class="code-runbar__hint">Opens the Code Lab with this part pre-loaded</span>' +
-              "</div>" : "") +
-            "</div>" +
+            (hasCode
+              ? '<div>' +
+                  '<h2 class="field-label"><span class="dot"></span>Code</h2>' +
+                  codeViewerHtml(code, fileName) +
+                  '<div class="code-runbar">' +
+                    '<button class="btn btn--run" type="button" data-run-code>' + ICON.play + " Run this code</button>" +
+                    '<span class="code-runbar__hint">Opens the Code Lab with this part pre-loaded</span>' +
+                  "</div>" +
+                "</div>"
+              : (notesText
+                  ? '<div class="entity-block"><p class="entity-block__title">Procedure / Notes</p><p>' + esc(notesText) + "</p></div>"
+                  : "")) +
           "</div>" +
 
           /* RIGHT */
           '<aside class="card card--pad stack">' +
             output +
-            downloadsHtml(experiment, section) +
+            (hasCode ? downloadsHtml(experiment, section) : "") +
             '<div>' +
               '<h3 class="field-label"><span class="dot"></span>Jump to part</h3>' +
               '<div class="parts">' + siblings.map(function (s) {
@@ -2268,6 +3251,28 @@
   /* ---------------------------------------------------------------------
      8. BOOT
      --------------------------------------------------------------------- */
+  /* Add / edit / delete controls live inside cards whose own click handler
+     opens the item, so they are handled in the capture phase to stop the
+     card's handler from also firing. */
+  document.addEventListener("click", function (event) {
+    const action = event.target.closest("[data-entity-action]");
+    if (action) {
+      event.preventDefault();
+      event.stopPropagation();
+      const kind = action.getAttribute("data-entity-action");
+      const uid = action.getAttribute("data-entity-uid");
+      const op = action.getAttribute("data-entity-op");
+      if (op === "edit") editCustomItem(kind, uid, action);
+      else if (op === "delete") deleteCustomItem(kind, uid);
+      return;
+    }
+    const add = event.target.closest("[data-add-entity]");
+    if (add) {
+      event.preventDefault();
+      openEntityForm(add.getAttribute("data-add-entity"), null, add);
+    }
+  }, true);
+
   document.addEventListener("click", function (event) {
     const editBtn = event.target.closest("#editCardBtn");
     if (editBtn) {
@@ -2307,6 +3312,64 @@
   }
   window.addEventListener("resize", syncTopbarHeight);
   window.addEventListener("load", syncTopbarHeight);
+
+  /* ---------------------------------------------------------------------
+     ADJUSTABLE SIDEBAR
+     The 3-bar button opens/closes the navigation. On desktop the sidebar
+     collapses in place; on small screens it slides in as an off-canvas
+     drawer with a scrim. The drawer always starts closed on small screens
+     and open on large ones, and follows window resizes across the
+     940px breakpoint.
+     --------------------------------------------------------------------- */
+  function setupSidebarToggle() {
+    const aside = $(".sidebar");
+    const btn = $("[data-sidebar-toggle]");
+    const scrim = $(".sidebar-scrim");
+    if (!aside) return;
+    const mq = window.matchMedia("(max-width: 940px)");
+    let open = !mq.matches;
+
+    function applyState() {
+      document.body.classList.toggle("sidebar-menu-open", open);
+      document.body.classList.toggle("sidebar-collapsed", !open);
+      aside.classList.toggle("is-open", open);
+      aside.setAttribute("aria-hidden", open ? "false" : "true");
+      if (btn) {
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.setAttribute("aria-label", open ? "Close navigation menu" : "Open navigation menu");
+      }
+    }
+
+    function openMenu() {
+      if (open) return;
+      open = true;
+      applyState();
+      const first = aside.querySelector("a[data-link]");
+      if (mq.matches && first) first.focus();
+    }
+
+    function closeMenu() {
+      if (!open) return;
+      open = false;
+      applyState();
+      if (mq.matches && btn && document.contains(btn)) btn.focus();
+    }
+
+    if (btn) btn.addEventListener("click", function () { open ? closeMenu() : openMenu(); });
+    if (scrim) scrim.addEventListener("click", closeMenu);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeMenu();
+    });
+    aside.addEventListener("click", function (e) {
+      if (mq.matches && e.target.closest("a[data-link]")) closeMenu();
+    });
+
+    const onBreakpoint = function (ev) { open = !ev.matches; applyState(); };
+    if (typeof mq.addEventListener === "function") mq.addEventListener("change", onBreakpoint);
+    else if (typeof mq.addListener === "function") mq.addListener(onBreakpoint);
+
+    applyState();
+  }
 
   function renderModulesPage() {
     return (
@@ -2351,28 +3414,19 @@
 
   function renderExperimentsPage() {
     const cards = experiments.map(function(e, i) {
-      return (
-        '<article class="exp-card" data-exp-card="' + e.id + '" style="animation-delay:' + Math.min(i*45,400) + 'ms" tabindex="0" role="button" aria-label="Open preview of Experiment ' + e.id + '">' +
-          '<div class="exp-card__top">' +
-            '<span class="exp-card__num">' + e.id + '</span>' +
-            '<h3 class="exp-card__name">' + esc(e.name) + '</h3>' +
-          '</div>' +
-          '<p class="exp-card__tag">' + esc(e.tagline || '') + '</p>' +
-          '<div class="exp-card__foot">' +
-            '<span class="chip">' + plural(e.sections.length, 'part') + '</span>' +
-            '<span class="exp-card__parts">' + e.sections.map(function(s){return '<i>'+esc(s.letter)+'</i>'}).join('') + '</span>' +
-          '</div>' +
-        '</article>'
-      );
+      return experimentCardHtml(e, "", i);
     }).join('');
     return (
       '<div class="page stack">' +
         crumb([{ label: "Home", href: "#/" }, { label: "Experiments" }]) +
         '<section>' +
           '<div class="exp-head section-title-row">' +
-            '<h2 class="exp-head__title">Experiments <span class="exp-head__count">' + plural(experiments.length, 'experiment') + '</span></h2>' +
+            '<h2 class="exp-head__title">Experiments <span class="exp-head__count">' +
+              plural(experiments.length, 'experiment') + '</span></h2>' +
+            '<span class="exp-head__spacer"></span>' +
+            addButtonHtml("experiments", "Add Experiment") +
           '</div>' +
-          '<div class="exp-grid" id="expGridPage">' + cards + '</div>' +
+          '<div class="exp-grid" id="expGridPage">' + (cards || emptyExperimentsHtml()) + '</div>' +
         '</section>' +
       '</div>'
     );
@@ -2381,95 +3435,67 @@
   function wireExperimentsPage() {
     $$("#expGridPage [data-exp-card]").forEach(function(card) {
       card.addEventListener("click", function(){ openExperiment(card.getAttribute("data-exp-card")); });
-      card.addEventListener("keydown", function(e){ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openExperiment(card.getAttribute("data-exp-card")); }});
+      card.addEventListener("keydown", function(e){
+        if (e.target !== card) return;
+        if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openExperiment(card.getAttribute("data-exp-card")); }
+      });
     });
   }
 
   function renderToolsPage() {
-    const toolDefs = [
-      { name: "Python", desc: "Programming language for data analysis & experiments", exps: [1,2,3,4,5,6,7], url: "https://www.geeksforgeeks.org/python-programming-language/" },
-      { name: "Pandas", desc: "Data manipulation and analysis library", exps: [1,2,3,4,5,6,7], url: "https://www.geeksforgeeks.org/pandas-tutorial/" },
-      { name: "NumPy", desc: "Numerical computing library", exps: [1,3,4,5], url: "https://www.geeksforgeeks.org/numpy-tutorial/" },
-      { name: "Matplotlib", desc: "2D plotting library for visualizations", exps: [5], url: "https://www.geeksforgeeks.org/matplotlib-tutorial/" },
-      { name: "Seaborn", desc: "Statistical data visualization library", exps: [5], url: "https://www.geeksforgeeks.org/seaborn-tutorial/" },
-      { name: "Requests", desc: "HTTP library for API calls", exps: [2], url: "https://www.geeksforgeeks.org/python-requests-tutorial/" },
-      { name: "SQLite", desc: "Lightweight relational database", exps: [2], url: "https://www.geeksforgeeks.org/sqlite-tutorial/" },
-      { name: "Regex (re)", desc: "Regular expressions for pattern matching", exps: [3], url: "https://www.geeksforgeeks.org/python-regex/" },
-      { name: "Datetime (pandas)", desc: "Date/time parsing, time zones, periods & resampling", exps: [6], url: "https://www.geeksforgeeks.org/python-pandas-to-datetime/" },
-      { name: "GroupBy", desc: "Split-apply-combine grouping & aggregation", exps: [7], url: "https://www.geeksforgeeks.org/pandas-groupby/" }
-    ];
-    const cards = toolDefs.map(function(t, i) {
-      const expList = t.exps.map(function(x){return 'Exp ' + x}).join(', ');
-      return (
-        '<article class="exp-card">' +
-          '<div class="exp-card__top">' +
-            '<h3 class="exp-card__name">' + esc(t.name) + '</h3>' +
-          '</div>' +
-          '<p class="exp-card__tag">' + esc(t.desc) + '</p>' +
-          '<div style="margin-top:8px">' +
-            '<span class="chip">' + esc(expList) + '</span>' +
-          '</div>' +
-          '<div style="margin-top:auto;padding-top:12px">' +
-            '<a class="btn btn--sm btn--primary" href="' + esc(t.url) + '" target="_blank" rel="noopener noreferrer">Learn More</a>' +
-          '</div>' +
-        '</article>'
-      );
-    }).join('');
+    const list = contentList("tools");
+    const cards = list.map(function(t){ return toolCardHtml(t); }).join('');
     return (
       '<div class="page stack">' +
         crumb([{ label: "Home", href: "#/" }, { label: "Tools" }]) +
         '<section>' +
           '<div class="exp-head section-title-row">' +
-            '<h2 class="exp-head__title">Tools & Technologies</h2>' +
+            '<h2 class="exp-head__title">Tools &amp; Technologies <span class="exp-head__count">' +
+              plural(list.length, "tool") + '</span></h2>' +
+            '<span class="exp-head__spacer"></span>' +
+            addButtonHtml("tools", "Add Tool") +
           '</div>' +
-          '<div class="exp-grid">' + cards + '</div>' +
+          '<div class="exp-grid" id="toolsGrid">' + (cards || emptyToolsHtml()) + '</div>' +
         '</section>' +
       '</div>'
     );
   }
 
-  function wireToolsPage() {}
+  function wireToolsPage() {
+    $$("#toolsGrid .entity-details").forEach(function(node){
+      node.addEventListener("toggle", function(){ /* native disclosure, nothing to wire */ });
+    });
+  }
 
   function renderProjectsPage() {
-    /* Content comes from the `projects` array in assets/js/data.js. */
-    const projects = (window.projects || []);
-    const cards = projects.map(function(p) {
-      const link = p.github
-        ? '<div style="margin-top:auto;padding-top:12px">' +
-            '<a class="btn btn--sm btn--primary" href="' + esc(p.github) + '" target="_blank" rel="noopener noreferrer">GitHub Link</a>' +
-          '</div>'
-        : '';
-      return (
-        '<article class="exp-card">' +
-          '<div class="exp-card__top">' +
-            '<h3 class="exp-card__name">' + esc(p.title) + '</h3>' +
-          '</div>' +
-          '<div style="margin-top:8px">' +
-            '<span class="chip">' + esc(p.tools) + '</span>' +
-          '</div>' +
-          '<p class="exp-card__tag" style="margin-top:10px">' + esc(p.desc) + '</p>' +
-          link +
-        '</article>'
-      );
-    }).join('');
-    const body = projects.length
-      ? '<div class="exp-grid">' + cards + '</div>'
-      : '<h3>No projects yet</h3>' +
-        '<p class="muted">Add entries to the <code>projects</code> array in assets/js/data.js to show them here.</p>';
+    /* Content comes from the `projects` array in assets/js/data.js, plus
+       any projects created through the Add Project form (localStorage). */
+    const list = contentList("projects");
+    const cards = list.map(function(p){ return projectCardHtml(p); }).join('');
     return (
       '<div class="page stack">' +
         crumb([{ label: "Home", href: "#/" }, { label: "Projects" }]) +
         '<section>' +
           '<div class="exp-head section-title-row">' +
-            '<h2 class="exp-head__title">Projects Showcase</h2>' +
+            '<h2 class="exp-head__title">Projects Showcase <span class="exp-head__count">' +
+              plural(list.length, "project") + '</span></h2>' +
+            '<span class="exp-head__spacer"></span>' +
+            addButtonHtml("projects", "Add Project") +
           '</div>' +
-          body +
+          (list.length
+            ? '<div class="exp-grid" id="projectsGrid">' + cards + '</div>'
+            : emptyProjectsHtml()) +
         '</section>' +
       '</div>'
     );
   }
 
-  function wireProjectsPage() {}
+  function wireProjectsPage() {
+    /* Hide a broken thumbnail rather than leaving a broken-image icon. */
+    $$("#projectsGrid .project-thumb").forEach(function(img){
+      img.addEventListener("error", function(){ img.style.display = "none"; });
+    });
+  }
 
   function renderProfilePage() {
     return (
@@ -2502,7 +3528,9 @@
   }
 
   restoreStudentCard();
+  loadContent();
   paintBranding();
+  setupSidebarToggle();
   render();
   syncTopbarHeight();
 })();
